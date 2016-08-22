@@ -1,0 +1,16 @@
+group 'eu.hansolo.fx'
+version '1.0-SNAPSHOT'
+
+apply plugin: 'java'
+
+sourceCompatibility = 1.8
+
+repositories {
+    jcenter()
+}
+
+dependencies {
+    compile 'org.kordamp.ikonli:ikonli-core:1.6.0'
+    compile 'org.kordamp.ikonli:ikonli-javafx:1.6.0'
+    compile 'org.kordamp.ikonli:ikonli-fontawesome-pack:1.6.0'
+}
