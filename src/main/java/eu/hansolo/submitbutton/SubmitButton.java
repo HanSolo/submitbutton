@@ -21,8 +21,11 @@ import javafx.animation.KeyFrame;
 import javafx.animation.KeyValue;
 import javafx.animation.Timeline;
 import javafx.beans.DefaultProperty;
+import javafx.beans.property.DoubleProperty;
+import javafx.beans.property.DoublePropertyBase;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.ObjectPropertyBase;
+import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.VPos;
@@ -55,36 +58,40 @@ import org.kordamp.ikonli.javafx.FontIcon;
  */
 @DefaultProperty("children")
 public class SubmitButton extends Region {
-    private static final double          PREFERRED_WIDTH  = 400;
-    private static final double          PREFERRED_HEIGHT = 100;
-    private static final double          MINIMUM_WIDTH    = 40;
-    private static final double          MINIMUM_HEIGHT   = 10;
-    private static final double          MAXIMUM_WIDTH    = 1024;
-    private static final double          MAXIMUM_HEIGHT   = 1024;
-    private static double                aspectRatio      = PREFERRED_HEIGHT / PREFERRED_WIDTH;
-    private static boolean               transmitting     = false;
-    private        boolean               keepAspect;
-    private        double                size;
-    private        double                width;
-    private        double                height;
-    private        Rectangle             frame;
-    private        Rectangle             buttonArea;
-    private        Text                  text;
-    private        Pane                  progressPane;
-    private        Arc                   progressBar;
-    private        StackPane             iconPane;
-    private        FontIcon              icon;
-    private        StackPane             pane;
-    private        ObjectProperty<Color> color;
-    private        ObjectProperty<Color> frameColor;
-    private        ObjectProperty<Color> buttonColor;
-    private        ObjectProperty<Color> textColor;
-    private        ObjectProperty<Color> progressBarColor;
-    private        ObjectProperty<Color> iconColor;
-    private        Paint                 backgroundPaint;
-    private        Paint                 borderPaint;
-    private        double                borderWidth;
-    private        Timeline              timeline;
+    public enum Status { NONE, IN_PROGRESS, SUCCESS, FAIL, FINISHED }
+    private static final double           PREFERRED_WIDTH  = 400;
+    private static final double           PREFERRED_HEIGHT = 100;
+    private static final double           MINIMUM_WIDTH    = 40;
+    private static final double           MINIMUM_HEIGHT   = 10;
+    private static final double           MAXIMUM_WIDTH    = 1024;
+    private static final double           MAXIMUM_HEIGHT   = 1024;
+    private static double                 aspectRatio      = PREFERRED_HEIGHT / PREFERRED_WIDTH;
+    private        boolean                keepAspect;
+    private        double                 size;
+    private        double                 width;
+    private        double                 height;
+    private        Rectangle              frame;
+    private        Rectangle              buttonArea;
+    private        Text                   text;
+    private        Pane                   progressPane;
+    private        Arc                    progressBar;
+    private        StackPane              iconPane;
+    private        FontIcon               icon;
+    private        StackPane              pane;
+    private        ObjectProperty<Color>  color;
+    private        ObjectProperty<Color>  frameColor;
+    private        ObjectProperty<Color>  buttonColor;
+    private        ObjectProperty<Color>  textColor;
+    private        ObjectProperty<Color>  progressBarColor;
+    private        ObjectProperty<Color>  iconColor;
+    private        DoubleProperty         progress;
+    private        ObjectProperty<Status> status;
+    private        Color                  formerColor;
+    private        Status                 lastStatus;
+    private        Paint                  backgroundPaint;
+    private        Paint                  borderPaint;
+    private        double                 borderWidth;
+    private        Timeline               timeline;
 
 
     // ******************** Constructors **************************************
@@ -126,6 +133,30 @@ public class SubmitButton extends Region {
             @Override public Object getBean() { return SubmitButton.this; }
             @Override public String getName() { return "iconColor"; }
         };
+        progress         = new DoublePropertyBase(0) {
+            @Override protected void invalidated() {
+                set(clamp(0, 1, get()));
+                progressBar.setLength(-360.0 * get());
+                if (Double.compare(get(), 1.0) >= 0) animateFromProgressSuccess();
+            }
+            @Override public Object getBean() { return SubmitButton.this; }
+            @Override public String getName() { return "progress"; }
+        };
+        status           = new ObjectPropertyBase<Status>(Status.NONE) {
+            @Override protected void invalidated() {
+                switch(get()) {
+                    case IN_PROGRESS: break;
+                    case SUCCESS    : icon.setIconCode(FontAwesome.CHECK); break;
+                    case FAIL       : icon.setIconCode(FontAwesome.CLOSE); formerColor = getColor(); color.set(Color.CRIMSON); animateFromProgressFail(); break;
+                    case FINISHED   : progress.set(0); break;
+                    case NONE       :
+                    default         : break;
+                }
+            }
+            @Override public Object getBean() { return SubmitButton.this; }
+            @Override public String getName() { return "status"; }
+        };
+        formerColor      = getColor();
         backgroundPaint  = Color.TRANSPARENT;
         borderPaint      = Color.TRANSPARENT;
         borderWidth      = 0d;
@@ -197,7 +228,8 @@ public class SubmitButton extends Region {
     private void registerListeners() {
         widthProperty().addListener(o -> resize());
         heightProperty().addListener(o -> resize());
-        buttonArea.setOnMousePressed(e -> handleClickEvent());
+        buttonArea.setOnMousePressed(e -> animateUpToProgress());
+        status.addListener((o, ov, nv) -> lastStatus = ov);
     }
 
 
@@ -212,10 +244,19 @@ public class SubmitButton extends Region {
     public void setColor(final Color COLOR) { color.set(COLOR); }
     public ObjectProperty<Color> colorProperty() { return color; }
 
-    private void handleClickEvent() {
-        if (transmitting) return;
-        transmitting = true;
+    public double getProgress() { return progress.get(); }
+    public void setProgress(final double PROGRESS) { progress.set(PROGRESS); }
+    public DoubleProperty progressProperty() { return progress; }
 
+    public Status getStatus() { return status.get(); }
+    private void setStatus(final Status STATUS) { status.set(STATUS); }
+    public ReadOnlyObjectProperty<Status> statusProperty() { return status; }
+
+    public Status getLastStatus() { return lastStatus; }
+
+    public void setFailed() { setStatus(Status.FAIL); }
+
+    private void animateUpToProgress() {
         KeyValue kvButtonAreaFill0   = new KeyValue(buttonArea.fillProperty(), Color.WHITE, Interpolator.EASE_BOTH);
         KeyValue kvTextFill0         = new KeyValue(text.fillProperty(), getColor(), Interpolator.EASE_BOTH);
 
@@ -238,7 +279,31 @@ public class SubmitButton extends Region {
         KeyValue kvProgressBarColor0 = new KeyValue(progressBar.strokeProperty(), getColor(), Interpolator.EASE_BOTH);
 
         KeyValue kvProgressBarValue0 = new KeyValue(progressBar.lengthProperty(), 0, Interpolator.EASE_BOTH);
-        KeyValue kvProgressBarValue1 = new KeyValue(progressBar.lengthProperty(), -360, Interpolator.SPLINE(0.8, 0.1, 0.2, 0.9));
+
+        // KeyFrames to progress
+        KeyFrame kf0 = new KeyFrame(Duration.ZERO, kvButtonAreaFill0, kvTextFill0);
+        KeyFrame kf1 = new KeyFrame(Duration.millis(300),  kvButtonAreaFill1, kvTextFill1, kvTextSize0);
+        KeyFrame kf2 = new KeyFrame(Duration.millis(400),  kvTextSize1);
+        KeyFrame kf3 = new KeyFrame(Duration.millis(500),  kvTextSize0);
+        KeyFrame kf4 = new KeyFrame(Duration.millis(700),  kvButtonAreaFill1, kvTextFill1, kvTextOpacity0, kvFrameWidth0, kvButtonAreaWidth0, kvFrameFill0);
+        KeyFrame kf5 = new KeyFrame(Duration.millis(1000), kvFrameWidth1, kvButtonAreaWidth1, kvTextOpacity1, kvButtonAreaFill2, kvFrameFill1, kvProgressBarColor0, kvProgressBarValue0);
+
+        // Play timeline to progress
+        timeline.getKeyFrames().setAll(kf0, kf1, kf2, kf3, kf4, kf5);
+        timeline.setOnFinished(e -> setStatus(Status.IN_PROGRESS));
+        timeline.play();
+    }
+
+    private void animateFromProgressSuccess() {
+        setStatus(Status.SUCCESS);
+
+        KeyValue kvFrameWidth1       = new KeyValue(frame.widthProperty(), height, Interpolator.EASE_BOTH);
+        KeyValue kvButtonAreaWidth1  = new KeyValue(buttonArea.widthProperty(), height * 0.9, Interpolator.EASE_BOTH);
+        KeyValue kvTextOpacity1      = new KeyValue(text.opacityProperty(), 0, Interpolator.EASE_BOTH);
+        KeyValue kvButtonAreaFill2   = new KeyValue(buttonArea.fillProperty(), Color.WHITE, Interpolator.EASE_BOTH);
+        KeyValue kvProgressBarColor0 = new KeyValue(progressBar.strokeProperty(), getColor(), Interpolator.EASE_BOTH);
+
+        KeyValue kvProgressBarValue0 = new KeyValue(progressBar.lengthProperty(), 0, Interpolator.EASE_BOTH);
 
         KeyValue kvProgressBarColor1 = new KeyValue(progressBar.fillProperty(), Color.TRANSPARENT, Interpolator.DISCRETE);
         KeyValue kvFrameFill2        = new KeyValue(frame.fillProperty(), getColor(), Interpolator.DISCRETE);
@@ -254,24 +319,68 @@ public class SubmitButton extends Region {
         KeyValue kvTextFill2         = new KeyValue(text.fillProperty(), getColor(), Interpolator.DISCRETE);
         KeyValue kvIconOpacity2      = new KeyValue(icon.opacityProperty(), 0, Interpolator.DISCRETE);
 
-        KeyFrame kf0 = new KeyFrame(Duration.ZERO, kvButtonAreaFill0, kvTextFill0);
-        KeyFrame kf1 = new KeyFrame(Duration.millis(300),  kvButtonAreaFill1, kvTextFill1, kvTextSize0);
-        KeyFrame kf2 = new KeyFrame(Duration.millis(400),  kvTextSize1);
-        KeyFrame kf3 = new KeyFrame(Duration.millis(500),  kvTextSize0);
-        KeyFrame kf4 = new KeyFrame(Duration.millis(700),  kvButtonAreaFill1, kvTextFill1, kvTextOpacity0, kvFrameWidth0, kvButtonAreaWidth0, kvFrameFill0);
-        KeyFrame kf5 = new KeyFrame(Duration.millis(1000), kvFrameWidth1, kvButtonAreaWidth1, kvTextOpacity1, kvButtonAreaFill2, kvFrameFill1, kvProgressBarColor0, kvProgressBarValue0);
-        KeyFrame kf6 = new KeyFrame(Duration.millis(2500), kvProgressBarValue1);
-        KeyFrame kf7 = new KeyFrame(Duration.millis(2700), kvFrameWidth1, kvButtonAreaWidth1, kvProgressBarColor0, kvButtonAreaFill2);
-        KeyFrame kf8 = new KeyFrame(Duration.millis(2701), kvFrameFill2, kvProgressBarValue0, kvProgressBarColor1, kvIconOpacity0);
-        KeyFrame kf9 = new KeyFrame(Duration.millis(2900), kvFrameWidth2, kvButtonAreaWidth2, kvButtonAreaFill3, kvIconOpacity1, kvTextFill2);
-        KeyFrame kf10 = new KeyFrame(Duration.millis(3300), kvFrameWidth2, kvButtonAreaWidth2, kvButtonAreaFill3, kvIconOpacity1, kvTextOpacity1);
-        KeyFrame kf11 = new KeyFrame(Duration.millis(3500), kvFrameWidth2, kvButtonAreaWidth2, kvButtonAreaFill3, kvIconOpacity2, kvTextOpacity1);
-        KeyFrame kf12 = new KeyFrame(Duration.millis(4000), kvButtonAreaFill4, kvTextOpacity2);
+        // KeyFrames from progress
+        KeyFrame kf7  = new KeyFrame(Duration.ZERO, kvFrameWidth1, kvButtonAreaWidth1, kvProgressBarColor0, kvButtonAreaFill2);
 
-        timeline.getKeyFrames().setAll(kf0, kf1, kf2, kf3, kf4, kf5, kf6, kf7, kf8, kf9, kf10, kf11, kf12);
+        KeyFrame kf8  = new KeyFrame(Duration.millis(1), kvFrameFill2, kvProgressBarValue0, kvProgressBarColor1, kvIconOpacity0);
+        KeyFrame kf9  = new KeyFrame(Duration.millis(200), kvFrameWidth2, kvButtonAreaWidth2, kvButtonAreaFill3, kvIconOpacity1, kvTextFill2);
+        KeyFrame kf10 = new KeyFrame(Duration.millis(600), kvFrameWidth2, kvButtonAreaWidth2, kvButtonAreaFill3, kvIconOpacity1, kvTextOpacity1);
+        KeyFrame kf11 = new KeyFrame(Duration.millis(900), kvFrameWidth2, kvButtonAreaWidth2, kvButtonAreaFill3, kvIconOpacity2, kvTextOpacity1);
+        KeyFrame kf12 = new KeyFrame(Duration.millis(1400), kvButtonAreaFill4, kvTextOpacity2);
+
+        // Play timeline from progress
+        timeline.getKeyFrames().setAll(kf7, kf8, kf9, kf10, kf11, kf12);
+        timeline.setOnFinished(e -> setStatus(Status.FINISHED));
         timeline.play();
+    }
 
-        timeline.setOnFinished(e -> transmitting = false);
+    private void animateFromProgressFail() {
+        setStatus(Status.FAIL);
+
+        KeyValue kvFrameWidth1       = new KeyValue(frame.widthProperty(), height, Interpolator.EASE_BOTH);
+        KeyValue kvButtonAreaWidth1  = new KeyValue(buttonArea.widthProperty(), height * 0.9, Interpolator.EASE_BOTH);
+        KeyValue kvTextOpacity1      = new KeyValue(text.opacityProperty(), 0, Interpolator.EASE_BOTH);
+        KeyValue kvButtonAreaFill2   = new KeyValue(buttonArea.fillProperty(), Color.WHITE, Interpolator.EASE_BOTH);
+        KeyValue kvProgressBarColor0 = new KeyValue(progressBar.strokeProperty(), getColor(), Interpolator.EASE_BOTH);
+
+        KeyValue kvProgressBarValue0 = new KeyValue(progressBar.lengthProperty(), 0, Interpolator.EASE_BOTH);
+
+        KeyValue kvProgressBarColor1 = new KeyValue(progressBar.fillProperty(), Color.TRANSPARENT, Interpolator.DISCRETE);
+        KeyValue kvFrameFill2        = new KeyValue(frame.fillProperty(), getColor(), Interpolator.DISCRETE);
+        KeyValue kvIconOpacity0      = new KeyValue(icon.opacityProperty(), 0, Interpolator.EASE_BOTH);
+
+        KeyValue kvFrameWidth2       = new KeyValue(frame.widthProperty(), width, Interpolator.EASE_BOTH);
+        KeyValue kvButtonAreaWidth2  = new KeyValue(buttonArea.widthProperty(), width - height * 0.1, Interpolator.EASE_BOTH);
+        KeyValue kvButtonAreaFill3   = new KeyValue(buttonArea.fillProperty(), getColor(), Interpolator.EASE_BOTH);
+        KeyValue kvIconOpacity1      = new KeyValue(icon.opacityProperty(), 1, Interpolator.EASE_BOTH);
+
+        KeyValue kvButtonAreaFill4   = new KeyValue(buttonArea.fillProperty(), Color.WHITE, Interpolator.EASE_BOTH);
+        KeyValue kvTextOpacity2      = new KeyValue(text.opacityProperty(), 1, Interpolator.EASE_BOTH);
+        KeyValue kvTextFill2         = new KeyValue(text.fillProperty(), getColor(), Interpolator.DISCRETE);
+        KeyValue kvIconOpacity2      = new KeyValue(icon.opacityProperty(), 0, Interpolator.DISCRETE);
+
+        // KeyFrames from progress
+        KeyFrame kf7  = new KeyFrame(Duration.ZERO, kvFrameWidth1, kvButtonAreaWidth1, kvProgressBarColor0, kvButtonAreaFill2);
+        KeyFrame kf8  = new KeyFrame(Duration.millis(1), kvFrameFill2, kvProgressBarValue0, kvProgressBarColor1, kvIconOpacity0);
+        KeyFrame kf9  = new KeyFrame(Duration.millis(200), kvFrameWidth2, kvButtonAreaWidth2, kvButtonAreaFill3, kvIconOpacity1, kvTextFill2);
+        KeyFrame kf10 = new KeyFrame(Duration.millis(600), kvFrameWidth2, kvButtonAreaWidth2, kvButtonAreaFill3, kvIconOpacity1, kvTextOpacity1);
+        KeyFrame kf11 = new KeyFrame(Duration.millis(900), kvFrameWidth2, kvButtonAreaWidth2, kvButtonAreaFill3, kvIconOpacity2, kvTextOpacity1);
+        KeyFrame kf12 = new KeyFrame(Duration.millis(1400), kvButtonAreaFill4, kvTextOpacity2);
+
+        // Play timeline from progress
+        timeline.getKeyFrames().setAll(kf7, kf8, kf9, kf10, kf11, kf12);
+        timeline.setOnFinished(e -> {
+            setColor(formerColor);
+            progressBarColor.set(Color.TRANSPARENT);
+            setStatus(Status.FINISHED);
+        });
+        timeline.play();
+    }
+
+    private double clamp(final double MIN, final double MAX, final double VALUE) {
+        if (Double.compare(VALUE, MIN) < 0) return MIN;
+        if (Double.compare(VALUE, MAX) > 0) return MAX;
+        return VALUE;
     }
 
 
